@@ -181,6 +181,19 @@
      <string>log输出</string>
     </property>
    </widget>
+   <widget class="QCheckBox" name="checkBox_childProcess">
+    <property name="geometry">
+     <rect>
+      <x>110</x>
+      <y>140</y>
+      <width>131</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>InjectChildProcess</string>
+    </property>
+   </widget>
   </widget>
   <widget class="QToolBar" name="mainToolBar">
    <attribute name="toolBarArea">

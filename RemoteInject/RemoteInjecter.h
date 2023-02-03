@@ -25,5 +25,10 @@ public slots:
 	void LaunchEXE();
 
 private:
+	void LogError(const std::string& msg);
+	void LogInfo(const std::string& msg);
+	void LogSuccess(const std::string& msg);
+
+	bool GetProceeIDfromParentID(DWORD& dwParentProcessId, std::vector<DWORD>& childProcess);
 	bool Inject(LPCTSTR DLLPath, DWORD ProcessID);
 };

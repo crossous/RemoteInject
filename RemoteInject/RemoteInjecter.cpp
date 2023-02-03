@@ -7,12 +7,33 @@
 
 #include <sstream>
 
+
+#include <tlhelp32.h>
+
 RemoteInjecter::RemoteInjecter(QWidget* parent)
 	: QMainWindow(parent)
 {
 	ui.setupUi(this);
 	QWidget* centralWidget = this->findChild<QWidget*>("centralWidget");
 	mTextEdit_log = centralWidget->findChild<QTextEdit*>("textEdit_log");
+}
+
+void RemoteInjecter::LogError(const std::string& msg)
+{
+	mTextEdit_log->setTextColor(Qt::red);
+	mTextEdit_log->append(QString::fromStdString("[Error]" + msg));
+}
+
+void RemoteInjecter::LogInfo(const std::string& msg)
+{
+	mTextEdit_log->setTextColor(Qt::black);
+	mTextEdit_log->append(QString::fromStdString("[Info]" + msg));
+}
+
+void RemoteInjecter::LogSuccess(const std::string& msg)
+{
+	mTextEdit_log->setTextColor(Qt::green);
+	mTextEdit_log->append(QString::fromStdString("[Success]" + msg));
 }
 
 void RemoteInjecter::SelectTargetFile()
@@ -39,13 +60,11 @@ void RemoteInjecter::SelectTargetFile()
 		QLineEdit* lineEdit_workingDir = centralWidget->findChild<QLineEdit*>("lineEdit_workingDir");
 		lineEdit_workingDir->setText(QString::fromStdString(defaultWorkDir.string()));
 
-		mTextEdit_log->setTextColor(Qt::black);
-		mTextEdit_log->append(QString::fromStdString("[info]已选择exe路径：" +defaultWorkDir.string()));
+		LogInfo("已选择exe路径：" + defaultWorkDir.string());
 	}
 	else
 	{
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append("[error]未选择路径");
+		LogError("未选择路径");
 	}
 }
 
@@ -80,13 +99,11 @@ void RemoteInjecter::SelectWorkingDir()
 	if (res != "")
 	{
 		lineEdit_workingDir->setText(res);
-		mTextEdit_log->setTextColor(Qt::black);
-		mTextEdit_log->append(QString::fromStdString("[info]已选择工作目录：") + res);
+		LogInfo("已选择工作目录：" + res.toStdString());
 	}
 	else
 	{
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append("[error]未选择工作目录");
+		LogError("未选择工作目录");
 	}
 }
 
@@ -108,14 +125,46 @@ void RemoteInjecter::SelectDLL()
 		prePath = filepath;
 		lineEdit_dll->setText(filepath);
 
-		mTextEdit_log->setTextColor(Qt::black);
-		mTextEdit_log->append(QString::fromStdString("[info]已选择DLL：") + filepath);
+		LogInfo("已选择DLL：" + filepath.toStdString());
 	}
 	else
 	{
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append("[error]未选择DLL");
+		LogError("未选择DLL" );
 	}
+}
+
+
+bool RemoteInjecter::GetProceeIDfromParentID(DWORD& dwParentProcessId, std::vector<DWORD>& childProcess)
+{
+	childProcess.clear();
+	DWORD dwProcessID = 0;
+
+	//进行一个进程快照
+	HANDLE hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (hProcessSnap == INVALID_HANDLE_VALUE)
+	{
+		LogError("获取子进程时，创建对象快照失败");
+		return false;
+	}
+
+	PROCESSENTRY32 pe;
+	TCHAR procID[100] = { 0 };
+	pe.dwSize = sizeof(pe);
+	BOOL bProcess = Process32First(hProcessSnap, &pe);
+	//遍历所有进程
+	while (bProcess)
+	{
+		if (pe.th32ParentProcessID == dwParentProcessId)//判断如果父id与其pid相等，
+		{
+
+			dwProcessID = pe.th32ProcessID;
+			childProcess.push_back(dwProcessID);
+		}
+		bProcess = Process32Next(hProcessSnap, &pe);
+	}
+	CloseHandle(hProcessSnap);
+
+	return true;
 }
 
 void RemoteInjecter::LaunchEXE()
@@ -127,11 +176,13 @@ void RemoteInjecter::LaunchEXE()
 
 	QLineEdit* lineEdit_dll = centralWidget->findChild<QLineEdit*>("lineEdit_dll");
 
+	QCheckBox* checkBox_childProcess = centralWidget->findChild<QCheckBox*>("checkBox_childProcess");
+	bool injectChildProcess = checkBox_childProcess->isChecked();
+
 	QString targetFile = lineEdit_targetFile->text();
 	if (targetFile == "")
 	{
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append("[error]没有目标程序");
+		LogError("没有目标程序");
 
 		return;
 	}
@@ -191,7 +242,7 @@ void RemoteInjecter::LaunchEXE()
 	{
 		DWORD errorCode = GetLastError();
 		std::stringstream ss;
-		ss << "[error]进程开启错误，错误为：";
+		ss << "进程开启错误，错误为：";
 		ss << "0x" << std::hex << errorCode;
 
 		std::string errorStr;
@@ -202,14 +253,12 @@ void RemoteInjecter::LaunchEXE()
 
 		ss >> errorStr;
 
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append(QString::fromStdString(errorStr));
+		LogError(errorStr);
 		return;
 	}
 	else
 	{
-		mTextEdit_log->setTextColor(Qt::green);
-		mTextEdit_log->append("[success]开启进程成功");
+		LogSuccess("开启进程成功");
 	}
 
 	QString dllPath = lineEdit_dll->text();
@@ -218,20 +267,59 @@ void RemoteInjecter::LaunchEXE()
 	{
 		std::wstring cmdLineArgsWStr = dllPath.toStdWString();
 		const TCHAR* RenderDocDll = cmdLineArgsWStr.c_str();
-		if (!Inject(RenderDocDll, pi.dwProcessId))
+
+		if (injectChildProcess)
 		{
-			mTextEdit_log->setTextColor(Qt::red);
-			mTextEdit_log->append("[error]Inject函数创建远程线程失败");
+			std::vector<DWORD> childProcess;
+
+			for (int i = 0; i < 10; ++i)
+			{
+				int childProcessCount;
+				if (!GetProceeIDfromParentID(pi.dwProcessId, childProcess))
+				{
+					return;
+				}
+
+				if (childProcess.size() == 0)
+				{
+					LogInfo("暂未找到子进程，休息0.5s");
+					Sleep(500);
+				}
+				else 
+				{
+					if (!Inject(RenderDocDll, childProcess[0]))
+					{
+						LogError("Inject子进程时，函数创建远程线程失败");
+					}
+					else
+					{
+						LogSuccess("子进程创建远程线程成功");
+					}
+					break;
+				}
+			}
+
+			if(childProcess.size() == 0)
+				LogError("连续10次未找到子进程，放弃");
 		}
 		else
 		{
-			mTextEdit_log->setTextColor(Qt::green);
-			mTextEdit_log->append("[success]创建远程线程成功");
+			if (!Inject(RenderDocDll, pi.dwProcessId))
+			{
+				LogError("Inject函数创建远程线程失败");
+			}
+			else
+			{
+				LogSuccess("创建远程线程成功");
+			}
 		}
 
-		CloseHandle(pi.hProcess);
-		CloseHandle(pi.hThread);
+
+
 	}
+
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
 }
 
 
@@ -241,8 +329,7 @@ bool RemoteInjecter::Inject(LPCTSTR DLLPath, DWORD ProcessID)
 	hProcess = OpenProcess(PROCESS_ALL_ACCESS, TRUE, ProcessID);
 	if (!hProcess)
 	{
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append("[error]打开目标进程句柄失败");
+		LogError("打开目标进程句柄失败");
 		return false;
 	}
 
@@ -252,15 +339,13 @@ bool RemoteInjecter::Inject(LPCTSTR DLLPath, DWORD ProcessID)
 
 	if (!StartAddress)
 	{
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append("[error]申请路径地址空间失败");
+		LogError("申请路径地址空间失败");
 		return false;
 	}
 
 	if (!WriteProcessMemory(hProcess, StartAddress, DLLPath, PathSize, NULL))
 	{
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append("[error]传入路径地址空间失败");
+		LogError("传入路径地址空间失败");
 		return false;
 	}
 
@@ -268,16 +353,14 @@ bool RemoteInjecter::Inject(LPCTSTR DLLPath, DWORD ProcessID)
 
 	if (!pfnStartAddress)
 	{
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append("[error]获取LoadLibraryW函数地址失败");
+		LogError("获取LoadLibraryW函数地址失败");
 		return false;
 	}
 
 	HANDLE hThread = CreateRemoteThreadEx(hProcess, NULL, NULL, pfnStartAddress, StartAddress, NULL, NULL, NULL);
 	if (!hThread)
 	{
-		mTextEdit_log->setTextColor(Qt::red);
-		mTextEdit_log->append("[error]打开远程线程失败");
+		LogError("打开远程线程失败");
 		return false;
 	}
 
